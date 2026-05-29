@@ -5,10 +5,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'bus_data.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AuthService.init();
+  await UserSession.load();
   runApp(const TrackBusApp());
 }
 
@@ -32,198 +35,52 @@ class TrackBusApp extends StatelessWidget {
 // ─── SESSION ─────────────────────────────────────────────────────────────────
 
 class UserSession {
-  static bool isNewUser = true;
+  static const _historyKey = 'trackbus_travel_history_v1';
   static List<Map<String, dynamic>> travelHistory = [];
 
-  static void addTrip(Map<String, dynamic> bus, String destination) {
+  static Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_historyKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final list = jsonDecode(raw) as List<dynamic>;
+      travelHistory = list.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        final cv = m['colorValue'];
+        if (cv is int) m['color'] = Color(cv);
+        return m;
+      }).toList();
+    } catch (_) {
+      travelHistory = [];
+    }
+  }
+
+  static Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_historyKey, jsonEncode(travelHistory));
+  }
+
+  static void addTrip(Map<String, dynamic> bus, String destination, {String? from}) {
     final exists = travelHistory
         .any((t) => t['busNo'] == bus['busNo'] && t['to'] == destination);
     if (!exists) {
-      travelHistory.insert(0, {...bus, 'to': destination, 'lastTravelled': 'Today'});
+      final color = bus['color'] as Color;
+      travelHistory.insert(0, {
+        ...bus,
+        'colorValue': color.toARGB32(),
+        'to': destination,
+        if (from != null) 'from': from,
+        'lastTravelled': 'Today',
+      });
+      travelHistory[0].remove('color');
+      travelHistory[0].remove('stops');
+      if (travelHistory.length > 20) {
+        travelHistory = travelHistory.sublist(0, 20);
+      }
+      _save();
     }
-    isNewUser = false;
   }
 }
-
-// ─── DATA ────────────────────────────────────────────────────────────────────
-
-class BusStop {
-  final String name;
-  final String time;
-  final String status; // passed / current / upcoming
-  BusStop({required this.name, required this.time, required this.status});
-}
-
-class BusData {
-  final String busNo;
-  final String route;
-  final String driverName;
-  final String driverPhone;
-  final String conductorName;
-  final String conductorPhone;
-  final int eta;
-  final String distance;
-  final String crowd;
-  final double crowdLevel;
-  final Color color;
-  final List<BusStop> stops;
-
-  BusData({
-    required this.busNo,
-    required this.route,
-    required this.driverName,
-    required this.driverPhone,
-    required this.conductorName,
-    required this.conductorPhone,
-    required this.eta,
-    required this.distance,
-    required this.crowd,
-    required this.crowdLevel,
-    required this.color,
-    required this.stops,
-  });
-
-  Map<String, dynamic> toMap() => {
-        'busNo': busNo,
-        'route': route,
-        'driverName': driverName,
-        'conductorName': conductorName,
-        'eta': eta,
-        'distance': distance,
-        'crowd': crowd,
-        'crowdLevel': crowdLevel,
-        'color': color,
-        'stops': stops,
-      };
-}
-
-final List<BusData> allBuses = [
-  BusData(
-    busNo: 'KA 22 F 1234',
-    route: 'Belagavi → Gokak → Athani',
-    driverName: 'Raju Patil',
-    driverPhone: '9876543210',
-    conductorName: 'Suresh Kumar',
-    conductorPhone: '9876543211',
-    eta: 5,
-    distance: '2.1 km',
-    crowd: 'Moderate',
-    crowdLevel: 0.5,
-    color: const Color(0xFF1A3A5C),
-    stops: [
-      BusStop(name: 'Belagavi CBT',  time: '07:00 AM', status: 'passed'),
-      BusStop(name: 'Tilakwadi',     time: '07:12 AM', status: 'passed'),
-      BusStop(name: 'Vadgaon',       time: '07:25 AM', status: 'current'),
-      BusStop(name: 'Gokak Falls',   time: '07:50 AM', status: 'upcoming'),
-      BusStop(name: 'Gokak Town',    time: '08:10 AM', status: 'upcoming'),
-      BusStop(name: 'Soudatti',      time: '08:35 AM', status: 'upcoming'),
-      BusStop(name: 'Athani',        time: '09:00 AM', status: 'upcoming'),
-    ],
-  ),
-  BusData(
-    busNo: 'KA 22 F 5678',
-    route: 'Belagavi → Bailhongal → Saundatti',
-    driverName: 'Mahesh Desai',
-    driverPhone: '9845012345',
-    conductorName: 'Vinod Naik',
-    conductorPhone: '9845012346',
-    eta: 12,
-    distance: '4.8 km',
-    crowd: 'Light',
-    crowdLevel: 0.2,
-    color: const Color(0xFF2E7D32),
-    stops: [
-      BusStop(name: 'Belagavi CBT', time: '08:00 AM', status: 'passed'),
-      BusStop(name: 'Angol',        time: '08:15 AM', status: 'passed'),
-      BusStop(name: 'Hindalga',     time: '08:30 AM', status: 'current'),
-      BusStop(name: 'Bailhongal',   time: '09:00 AM', status: 'upcoming'),
-      BusStop(name: 'Saundatti',    time: '09:45 AM', status: 'upcoming'),
-    ],
-  ),
-  BusData(
-    busNo: 'KA 22 F 9101',
-    route: 'Belagavi → Ramdurg → Badami',
-    driverName: 'Basavraj Hungund',
-    driverPhone: '9632587410',
-    conductorName: 'Prakash Metri',
-    conductorPhone: '9632587411',
-    eta: 20,
-    distance: '8.3 km',
-    crowd: 'Crowded',
-    crowdLevel: 0.9,
-    color: const Color(0xFF6A1B9A),
-    stops: [
-      BusStop(name: 'Belagavi CBT', time: '09:00 AM', status: 'passed'),
-      BusStop(name: 'Munavalli',    time: '09:20 AM', status: 'current'),
-      BusStop(name: 'Ramdurg',      time: '10:00 AM', status: 'upcoming'),
-      BusStop(name: 'Lokapur',      time: '10:30 AM', status: 'upcoming'),
-      BusStop(name: 'Badami',       time: '11:15 AM', status: 'upcoming'),
-    ],
-  ),
-  BusData(
-    busNo: 'KA 22 F 7742',
-    route: 'Belagavi → Hukkeri → Chikkodi',
-    driverName: 'Nagesh Patil',
-    driverPhone: '9741236580',
-    conductorName: 'Ramesh Goudar',
-    conductorPhone: '9741236581',
-    eta: 8,
-    distance: '3.0 km',
-    crowd: 'Crowded',
-    crowdLevel: 0.85,
-    color: const Color(0xFF00695C),
-    stops: [
-      BusStop(name: 'Belagavi CBT', time: '06:30 AM', status: 'passed'),
-      BusStop(name: 'Hukkeri',      time: '07:10 AM', status: 'current'),
-      BusStop(name: 'Nippani',      time: '07:50 AM', status: 'upcoming'),
-      BusStop(name: 'Chikkodi',     time: '08:20 AM', status: 'upcoming'),
-    ],
-  ),
-  BusData(
-    busNo: 'KA 22 F 3321',
-    route: 'Belagavi → Khanapur → Dandeli',
-    driverName: 'Santosh Kulkarni',
-    driverPhone: '9512347896',
-    conductorName: 'Girish Kamble',
-    conductorPhone: '9512347897',
-    eta: 30,
-    distance: '11.2 km',
-    crowd: 'Light',
-    crowdLevel: 0.15,
-    color: const Color(0xFFB71C1C),
-    stops: [
-      BusStop(name: 'Belagavi CBT', time: '10:00 AM', status: 'passed'),
-      BusStop(name: 'Khanapur',     time: '10:45 AM', status: 'current'),
-      BusStop(name: 'Castle Rock',  time: '11:30 AM', status: 'upcoming'),
-      BusStop(name: 'Dandeli',      time: '12:15 PM', status: 'upcoming'),
-    ],
-  ),
-];
-
-List<BusData> searchBuses(String from, String to) {
-  if (from.isEmpty || to.isEmpty) return [];
-  return allBuses.where((bus) {
-    final names = bus.stops.map((s) => s.name.toLowerCase()).toList();
-    final fi = names.indexWhere((n) => n.contains(from.toLowerCase()));
-    final ti = names.indexWhere((n) => n.contains(to.toLowerCase()));
-    return fi != -1 && ti != -1 && fi < ti;
-  }).toList();
-}
-
-final List<String> allStops = [
-  // Belagavi route stops
-  'Belagavi CBT', 'Tilakwadi', 'Vadgaon', 'Gokak Falls',
-  'Gokak Town', 'Soudatti', 'Athani', 'Angol', 'Hindalga',
-  'Bailhongal', 'Saundatti', 'Munavalli', 'Ramdurg', 'Lokapur',
-  'Badami', 'Hukkeri', 'Nippani', 'Chikkodi', 'Khanapur',
-  'Castle Rock', 'Dandeli',
-  // Other Karnataka cities (for search suggestions)
-  'Bengaluru', 'Mysuru', 'Mangaluru', 'Udupi', 'Karwar',
-  'Hubballi', 'Dharwad', 'Ballari', 'Vijayapura', 'Kalaburagi',
-  'Raichur', 'Bidar', 'Bagalkot', 'Gadag', 'Koppal',
-  'Hassan', 'Chikkamagaluru', 'Shivamogga', 'Chitradurga',
-  'Tumkur', 'Mandya', 'Ramanagara', 'Kolar', 'Davangere',
-];
 
 // ─── AUTH (Local Storage) ───────────────────────────────────────────────
 
@@ -325,6 +182,73 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_sessionKey, currentUser!.email);
     return null;
+  }
+
+  static String? _oldEmailOtp;
+  static String? _newEmailOtp;
+  static String? _pendingNewEmail;
+
+  static String _generateOtp() =>
+      (100000 + Random().nextInt(900000)).toString();
+
+  /// Demo OTP delivery — returns the code so the UI can show it in a snackbar.
+  static Future<String> sendOldEmailOtp() async {
+    final existing = currentUser;
+    if (existing == null) throw StateError('Not logged in');
+    _oldEmailOtp = _generateOtp();
+    return _oldEmailOtp!;
+  }
+
+  static bool verifyOldEmailOtp(String code) {
+    return code.trim() == _oldEmailOtp;
+  }
+
+  static Future<String> sendNewEmailOtp(String newEmail) async {
+    if (!_isValidEmail(newEmail)) throw ArgumentError('Invalid email');
+    if (_users.any((u) => u.email.toLowerCase() == newEmail.trim().toLowerCase())) {
+      throw StateError('Email already registered');
+    }
+    _pendingNewEmail = newEmail.trim();
+    _newEmailOtp = _generateOtp();
+    return _newEmailOtp!;
+  }
+
+  static bool verifyNewEmailOtp(String code) {
+    return code.trim() == _newEmailOtp;
+  }
+
+  static Future<String?> commitEmailChange() async {
+    final existing = currentUser;
+    final newEmail = _pendingNewEmail;
+    if (existing == null || newEmail == null) return 'Complete email verification first';
+    if (_newEmailOtp == null) return 'Verify OTP sent to new email';
+
+    final idx = _users.indexWhere((u) => u.email.toLowerCase() == existing.email.toLowerCase());
+    if (idx == -1) return 'User not found';
+
+    final updated = AuthUser(
+      name: existing.name,
+      mobile: existing.mobile,
+      email: newEmail,
+      password: existing.password,
+      photoPath: existing.photoPath,
+    );
+    _users[idx] = updated;
+    currentUser = updated;
+    _oldEmailOtp = null;
+    _newEmailOtp = null;
+    _pendingNewEmail = null;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sessionKey, newEmail);
+    await _saveUsers();
+    return null;
+  }
+
+  static void cancelEmailChange() {
+    _oldEmailOtp = null;
+    _newEmailOtp = null;
+    _pendingNewEmail = null;
   }
 
   static Future<String?> updateProfile({
@@ -695,8 +619,14 @@ class EditProfileScreen extends StatefulWidget {
 class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _mobileCtrl;
+  late final TextEditingController _emailCtrl;
+  late final TextEditingController _oldOtpCtrl;
+  late final TextEditingController _newOtpCtrl;
   String? _photoPath;
   bool _saving = false;
+  bool _changingEmail = false;
+  int _emailStep = 0; // 0=none, 1=old OTP, 2=new email, 3=new OTP
+  String? _originalEmail;
 
   @override
   void initState() {
@@ -704,6 +634,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final u = AuthService.currentUser;
     _nameCtrl = TextEditingController(text: u?.name ?? '');
     _mobileCtrl = TextEditingController(text: u?.mobile ?? '');
+    _emailCtrl = TextEditingController(text: u?.email ?? '');
+    _oldOtpCtrl = TextEditingController();
+    _newOtpCtrl = TextEditingController();
+    _originalEmail = u?.email;
     _photoPath = u?.photoPath;
   }
 
@@ -711,6 +645,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _mobileCtrl.dispose();
+    _emailCtrl.dispose();
+    _oldOtpCtrl.dispose();
+    _newOtpCtrl.dispose();
+    AuthService.cancelEmailChange();
     super.dispose();
   }
 
@@ -742,7 +680,84 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _photoPath = null);
   }
 
+  Future<void> _startEmailChange() async {
+    final u = AuthService.currentUser;
+    if (u == null) return;
+    setState(() {
+      _changingEmail = true;
+      _emailStep = 1;
+      _emailCtrl.text = u.email;
+    });
+    try {
+      final otp = await AuthService.sendOldEmailOtp();
+      _snack('OTP sent to ${u.email} (demo: $otp)');
+    } catch (e) {
+      _snack(e.toString());
+      setState(() {
+        _changingEmail = false;
+        _emailStep = 0;
+      });
+    }
+  }
+
+  Future<void> _verifyOldOtp() async {
+    if (!AuthService.verifyOldEmailOtp(_oldOtpCtrl.text.trim())) {
+      _snack('Invalid OTP for current email');
+      return;
+    }
+    setState(() {
+      _emailStep = 2;
+      _emailCtrl.clear();
+    });
+    _snack('Enter your new email address');
+  }
+
+  Future<void> _sendNewEmailOtp() async {
+    final newEmail = _emailCtrl.text.trim();
+    try {
+      final otp = await AuthService.sendNewEmailOtp(newEmail);
+      setState(() => _emailStep = 3);
+      _snack('OTP sent to $newEmail (demo: $otp)');
+    } catch (e) {
+      _snack(e.toString().contains('registered') ? 'This email is already in use' : 'Enter a valid email');
+    }
+  }
+
+  Future<void> _verifyNewOtpAndFinishEmail() async {
+    if (!AuthService.verifyNewEmailOtp(_newOtpCtrl.text.trim())) {
+      _snack('Invalid OTP for new email');
+      return;
+    }
+    final err = await AuthService.commitEmailChange();
+    if (err != null) {
+      _snack(err);
+      return;
+    }
+    setState(() {
+      _changingEmail = false;
+      _emailStep = 0;
+      _originalEmail = AuthService.currentUser?.email;
+    });
+    _snack('Email updated successfully');
+  }
+
+  void _cancelEmailChange() {
+    AuthService.cancelEmailChange();
+    setState(() {
+      _changingEmail = false;
+      _emailStep = 0;
+      _emailCtrl.text = _originalEmail ?? '';
+      _oldOtpCtrl.clear();
+      _newOtpCtrl.clear();
+    });
+  }
+
   Future<void> _save() async {
+    if (_changingEmail && _emailStep > 0) {
+      _snack('Finish or cancel email change first');
+      return;
+    }
+
     final name = _nameCtrl.text.trim();
     final mobile = _mobileCtrl.text.trim();
 
@@ -850,6 +865,66 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 keyboardType: TextInputType.phone,
                 maxLength: 10,
               ),
+              const SizedBox(height: 12),
+              if (!_changingEmail) ...[
+                _AuthField(
+                  controller: _emailCtrl,
+                  label: 'Email ID',
+                  hint: _originalEmail ?? 'you@email.com',
+                  icon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: _startEmailChange,
+                    child: const Text('Change Email (OTP verification)', style: TextStyle(color: Color(0xFF1A3A5C), fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F9FF),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _emailStep == 1
+                            ? 'Step 1: Verify current email'
+                            : _emailStep == 2
+                                ? 'Step 2: Enter new email'
+                                : 'Step 3: Verify new email',
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1A3A5C)),
+                      ),
+                      const SizedBox(height: 10),
+                      if (_emailStep == 1) ...[
+                        Text('OTP sent to $_originalEmail', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                        const SizedBox(height: 8),
+                        _AuthField(controller: _oldOtpCtrl, label: 'OTP', hint: '6-digit code', icon: Icons.lock_outline, keyboardType: TextInputType.number, maxLength: 6),
+                        const SizedBox(height: 10),
+                        ElevatedButton(onPressed: _verifyOldOtp, style: _otpBtnStyle(), child: const Text('Verify & Continue')),
+                      ] else if (_emailStep == 2) ...[
+                        _AuthField(controller: _emailCtrl, label: 'New Email', hint: 'new@email.com', icon: Icons.email_outlined, keyboardType: TextInputType.emailAddress),
+                        const SizedBox(height: 10),
+                        ElevatedButton(onPressed: _sendNewEmailOtp, style: _otpBtnStyle(), child: const Text('Send OTP to New Email')),
+                      ] else ...[
+                        _AuthField(controller: _newOtpCtrl, label: 'OTP', hint: '6-digit code', icon: Icons.lock_outline, keyboardType: TextInputType.number, maxLength: 6),
+                        const SizedBox(height: 10),
+                        ElevatedButton(onPressed: _verifyNewOtpAndFinishEmail, style: _otpBtnStyle(), child: const Text('Confirm New Email')),
+                      ],
+                      TextButton(
+                        onPressed: _cancelEmailChange,
+                        child: const Text('Cancel email change', style: TextStyle(color: Color(0xFFC62828))),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 22),
               ElevatedButton(
                 onPressed: _saving ? null : _save,
@@ -870,6 +945,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ),
     );
   }
+
+  ButtonStyle _otpBtnStyle() => ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF1A3A5C),
+        foregroundColor: Colors.white,
+        minimumSize: const Size(double.infinity, 44),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      );
 }
 
 // ─── SPLASH ──────────────────────────────────────────────────────────────────
@@ -976,70 +1058,71 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late List<BusData> _arriving;
-  late Timer _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _arriving = List.from(allBuses)..sort((a, b) => a.eta.compareTo(b.eta));
-    _timer = Timer.periodic(const Duration(seconds: 6), (_) => setState(() {}));
-  }
-
-  @override
-  void dispose() { _timer.cancel(); super.dispose(); }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2F5),
-      body: Stack(
+      body: Column(
         children: [
-          Container(height: 260, decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFF0D2137), Color(0xFF1A3A5C)], begin: Alignment.topCenter, end: Alignment.bottomCenter))),
-          SafeArea(
-            child: SingleChildScrollView(
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF0D2137), Color(0xFF1A3A5C)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: SafeArea(
+              bottom: false,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
                     child: Row(
                       children: [
-                        Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFFF4A024), borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.directions_bus, color: Colors.white, size: 22)),
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(color: const Color(0xFFF4A024), borderRadius: BorderRadius.circular(10)),
+                          child: const Icon(Icons.directions_bus, color: Colors.white, size: 22),
+                        ),
                         const SizedBox(width: 10),
-                        const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text('TrackBus', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-                          Text('Belagavi', style: TextStyle(color: Colors.white60, fontSize: 12)),
-                        ]),
-                        const Spacer(),
+                        const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('TrackBus', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                            Text('Belagavi Rural', style: TextStyle(color: Colors.white60, fontSize: 12)),
+                          ],
+                        ),
                       ],
                     ),
                   ),
-                  // Location pill
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                       decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
-                      child: const Row(children: [
-                        Icon(Icons.location_on, color: Color(0xFFF4A024), size: 18),
-                        SizedBox(width: 8),
-                        Text('📍 My Current Location — Belagavi CBT', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                      ]),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.location_on, color: Color(0xFFF4A024), size: 18),
+                          SizedBox(width: 8),
+                          Text('My Current Location — CBT', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 24),
-                  // Conditional section
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: UserSession.isNewUser
-                        ? _ArrivingSection(buses: _arriving)
-                        : _FrequentSection(),
-                  ),
-                  const SizedBox(height: 20),
                 ],
               ),
+            ),
+          ),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: const _RecentlyTravelledSection(),
             ),
           ),
         ],
@@ -1048,102 +1131,108 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _ArrivingSection extends StatelessWidget {
-  final List<BusData> buses;
-  const _ArrivingSection({required this.buses});
+class _RecentlyTravelledSection extends StatelessWidget {
+  const _RecentlyTravelledSection();
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(children: [
-          const Icon(Icons.access_time, color: Colors.white, size: 16),
-          const SizedBox(width: 6),
-          const Text('Buses Arriving Now', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
-          const Spacer(),
-          Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: const Color(0xFFE3F2FD), borderRadius: BorderRadius.circular(20)),
-            child: const Row(children: [Icon(Icons.circle, color: Color(0xFF2196F3), size: 7), SizedBox(width: 4), Text('Live', style: TextStyle(fontSize: 11, color: Color(0xFF1A3A5C), fontWeight: FontWeight.w600))])),
-        ]),
-        const SizedBox(height: 12),
-        ...buses.map((bus) => _HomeBusTile(bus: bus)).toList(),
-      ],
-    );
+  BusData? _findBus(String busNo) {
+    for (final b in allBuses) {
+      if (b.busNo == busNo) return b;
+    }
+    return null;
   }
-}
 
-class _HomeBusTile extends StatelessWidget {
-  final BusData bus;
-  const _HomeBusTile({required this.bus});
-
-  @override
-  Widget build(BuildContext context) {
-    final level = bus.crowdLevel;
-    Color crowdColor = level < 0.4 ? const Color(0xFF2E7D32) : level < 0.7 ? const Color(0xFFF57C00) : const Color(0xFFC62828);
-    return GestureDetector(
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BusDetailScreen(bus: bus))),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 2))]),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Container(width: 44, height: 44, decoration: BoxDecoration(color: bus.color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(Icons.directions_bus, color: bus.color, size: 24)),
-              const SizedBox(width: 12),
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(bus.busNo, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF1A1A2E))),
-                Text(bus.route, style: TextStyle(fontSize: 11, color: Colors.grey.shade600), maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
-                Row(children: [
-                  Icon(Icons.people, size: 12, color: crowdColor),
-                  const SizedBox(width: 3),
-                  Text(bus.crowd, style: TextStyle(fontSize: 11, color: crowdColor, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                  Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(3), child: LinearProgressIndicator(value: level, backgroundColor: Colors.grey.shade200, valueColor: AlwaysStoppedAnimation<Color>(crowdColor), minHeight: 5))),
-                ]),
-              ])),
-              const SizedBox(width: 10),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-                decoration: BoxDecoration(color: bus.eta <= 5 ? const Color(0xFFE8F5E9) : const Color(0xFFFFF3E0), borderRadius: BorderRadius.circular(20)),
-                child: Text(bus.eta <= 1 ? 'Now!' : '${bus.eta} min', style: TextStyle(color: bus.eta <= 5 ? const Color(0xFF2E7D32) : const Color(0xFFE65100), fontSize: 12, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FrequentSection extends StatelessWidget {
-  const _FrequentSection();
   @override
   Widget build(BuildContext context) {
     final history = UserSession.travelHistory;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
       children: [
-        const Row(children: [
-          Icon(Icons.history, color: Colors.white, size: 16),
-          SizedBox(width: 6),
-          Text('Frequently Travelled', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
-        ]),
-        const SizedBox(height: 12),
-        ...history.map((t) => GestureDetector(
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SearchScreen())),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 8)]),
-            child: ListTile(
-              leading: Container(width: 44, height: 44, decoration: BoxDecoration(color: (t['color'] as Color).withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(Icons.directions_bus, color: t['color'] as Color, size: 24)),
-              title: Text(t['busNo'] as String, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-              subtitle: Text('To ${t['to']}', style: const TextStyle(fontSize: 11)),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+        const Row(
+          children: [
+            Icon(Icons.history, color: Color(0xFF1A3A5C), size: 18),
+            SizedBox(width: 8),
+            Text('Recently Travelled Buses', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF1A1A2E))),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          history.isEmpty ? 'Your recent trips will appear here' : '${history.length} recent trip${history.length == 1 ? '' : 's'}',
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 16),
+        if (history.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 40),
+            child: Column(
+              children: [
+                Icon(Icons.directions_bus_outlined, size: 56, color: Colors.grey.shade300),
+                const SizedBox(height: 12),
+                Text('No trips yet', style: TextStyle(fontSize: 14, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 6),
+                Text('Search a bus route to start tracking', style: TextStyle(fontSize: 12, color: Colors.grey.shade400)),
+              ],
             ),
-          ),
-        )).toList(),
+          )
+        else
+          ...history.map((t) {
+            final color = t['color'] as Color;
+            final bus = _findBus(t['busNo'] as String);
+            final fromLabel = t['from'] as String?;
+            return GestureDetector(
+              onTap: () {
+                if (bus != null) {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => BusDetailScreen(bus: bus)));
+                } else {
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const SearchScreen()));
+                }
+              },
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8F9FF),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
+                      child: Icon(Icons.directions_bus, color: color, size: 26),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(t['busNo'] as String, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF1A1A2E))),
+                          Text(t['route'] as String? ?? '', style: TextStyle(fontSize: 11, color: Colors.grey.shade600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          const SizedBox(height: 4),
+                          Text(
+                            fromLabel != null ? '$fromLabel → ${t['to']}' : 'To ${t['to']}',
+                            style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
+                          ),
+                          if (t['busType'] != null)
+                            Text('${t['busType']} • ${t['departureTime'] ?? ''}', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(t['lastTravelled'] as String? ?? 'Recent', style: TextStyle(fontSize: 10, color: Colors.grey.shade400)),
+                        const SizedBox(height: 6),
+                        const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
       ],
     );
   }
@@ -1168,7 +1257,16 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _showFromSug = false;
   bool _showToSug   = false;
 
-  List<String> _filter(String q) => allStops.where((s) => s.toLowerCase().contains(q.toLowerCase())).toList();
+  List<String> _filter(String q) {
+    final lower = q.toLowerCase();
+    return allStops.where((s) {
+      final sl = s.toLowerCase();
+      if (sl.contains(lower)) return true;
+      if (lower == 'cbt' && s == 'CBT') return true;
+      if (lower.contains('cbt') && s == 'CBT') return true;
+      return false;
+    }).toList();
+  }
 
   void _search() {
     setState(() {
@@ -1287,10 +1385,14 @@ class _SearchScreenState extends State<SearchScreen> {
                     : ListView(
                         padding: const EdgeInsets.all(14),
                         children: [
-                          Text('${_results.length} bus${_results.length > 1 ? 'es' : ''} found from $_from to $_to',
-                              style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600)),
+                          Text(
+                            normalizeStopName(_to) == 'cbt'
+                                ? '${_results.length} bus${_results.length > 1 ? 'es' : ''} to CBT from $_from'
+                                : '${_results.length} bus${_results.length > 1 ? 'es' : ''} found from $_from to $_to',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600),
+                          ),
                           const SizedBox(height: 10),
-                          ..._results.map((bus) => _ResultTile(bus: bus, destination: _to)).toList(),
+                          ..._results.map((bus) => _ResultTile(bus: bus, destination: _to, from: _from)).toList(),
                         ],
                       ),
           ),
@@ -1310,7 +1412,7 @@ class _SearchScreenState extends State<SearchScreen> {
     const SizedBox(height: 12),
     Text('No direct bus from $_from to $_to', style: const TextStyle(fontSize: 14, color: Colors.grey)),
     const SizedBox(height: 6),
-    const Text('Try going via Belagavi CBT', style: TextStyle(fontSize: 12, color: Colors.grey)),
+    const Text('Try a nearby stop or route via CBT', style: TextStyle(fontSize: 12, color: Colors.grey)),
   ]));
 }
 
@@ -1342,15 +1444,23 @@ class _SuggestionBox extends StatelessWidget {
 class _ResultTile extends StatelessWidget {
   final BusData bus;
   final String destination;
-  const _ResultTile({required this.bus, required this.destination});
+  final String from;
+  const _ResultTile({required this.bus, required this.destination, required this.from});
+
+  String? _arrivalAtFrom() {
+    final idx = bus.stops.indexWhere((s) => stopMatches(s.name, from));
+    if (idx == -1) return null;
+    return bus.stops[idx].time;
+  }
 
   @override
   Widget build(BuildContext context) {
     final level = bus.crowdLevel;
     Color crowdColor = level < 0.4 ? const Color(0xFF2E7D32) : level < 0.7 ? const Color(0xFFF57C00) : const Color(0xFFC62828);
+    final arrival = _arrivalAtFrom();
     return GestureDetector(
       onTap: () {
-        UserSession.addTrip(bus.toMap(), destination);
+        UserSession.addTrip(bus.toMap(), destination, from: from);
         Navigator.push(context, MaterialPageRoute(builder: (_) => BusDetailScreen(bus: bus)));
       },
       child: Container(
@@ -1365,6 +1475,8 @@ class _ResultTile extends StatelessWidget {
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(bus.busNo, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF1A1A2E))),
                 Text(bus.route, style: TextStyle(fontSize: 12, color: Colors.grey.shade600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 4),
+                Text('${bus.busType} • Departs ${bus.departureTime}', style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
               ])),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -1372,6 +1484,19 @@ class _ResultTile extends StatelessWidget {
                 child: Text(bus.eta <= 1 ? 'Now!' : '${bus.eta} min', style: TextStyle(color: bus.eta <= 5 ? const Color(0xFF2E7D32) : const Color(0xFFE65100), fontSize: 13, fontWeight: FontWeight.w700)),
               ),
             ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SearchDetailRow(icon: Icons.person_outline, label: 'Driver', value: bus.driverName),
+                _SearchDetailRow(icon: Icons.confirmation_number_outlined, label: 'Conductor', value: bus.conductorName),
+                if (arrival != null)
+                  _SearchDetailRow(icon: Icons.schedule, label: 'At your stop ($from)', value: arrival),
+                _SearchDetailRow(icon: Icons.place_outlined, label: 'Stops on route', value: '${bus.stops.length} stops'),
+              ],
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
@@ -1387,7 +1512,7 @@ class _ResultTile extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
             child: ElevatedButton.icon(
               onPressed: () {
-                UserSession.addTrip(bus.toMap(), destination);
+                UserSession.addTrip(bus.toMap(), destination, from: from);
                 Navigator.push(context, MaterialPageRoute(builder: (_) => BusDetailScreen(bus: bus)));
               },
               icon: const Icon(Icons.location_searching, size: 16),
@@ -1396,6 +1521,28 @@ class _ResultTile extends StatelessWidget {
             ),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+class _SearchDetailRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _SearchDetailRow({required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFF1A3A5C)),
+          const SizedBox(width: 6),
+          Text('$label: ', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600)),
+          Expanded(child: Text(value, style: const TextStyle(fontSize: 11, color: Color(0xFF1A1A2E)), maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
       ),
     );
   }
@@ -1473,7 +1620,7 @@ class _BusDetailScreenState extends State<BusDetailScreen> {
                         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           const Text('TrackBus', style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500, letterSpacing: 1)),
                           Text(bus.busNo, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w800)),
-                          Text(bus.route, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                          Text('${bus.route} • ${bus.busType}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
                         ]),
                       ]),
                     ),
@@ -1812,7 +1959,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       backgroundColor: const Color(0xFFF0F2F5),
       body: Column(
         children: [
-          // ── Blue top half with user details ──
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -1824,64 +1970,94 @@ class _ProfileScreenState extends State<ProfileScreen> {
             child: SafeArea(
               bottom: false,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
-                child: Column(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+                child: Row(
                   children: [
-                    // Top bar
-                    Row(children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: const Color(0xFFF4A024), borderRadius: BorderRadius.circular(10)),
-                        child: const Icon(Icons.directions_bus, color: Colors.white, size: 22),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text('TrackBus', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-                    ]),
-                    const SizedBox(height: 24),
-                    // User photo
-                    GestureDetector(
-                      onTap: _editProfile,
-                      child: Stack(
-                        children: [
-                          Container(
-                            width: 90,
-                            height: 90,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white.withOpacity(0.15),
-                              border: Border.all(color: Colors.white.withOpacity(0.5), width: 3),
-                            ),
-                            child: hasPhoto
-                                ? ClipOval(child: Image.file(File(u.photoPath!)))
-                                : const Icon(Icons.person, color: Colors.white, size: 52),
-                          ),
-                          Positioned(
-                            bottom: 2,
-                            right: 2,
-                            child: Container(
-                              width: 26,
-                              height: 26,
-                              decoration: const BoxDecoration(color: Color(0xFFF4A024), shape: BoxShape.circle),
-                              child: const Icon(Icons.camera_alt, color: Colors.white, size: 14),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    // User name & info
-                    Text(u.name, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 4),
-                    Text(u.email, style: const TextStyle(color: Colors.white60, fontSize: 13)),
-                    const SizedBox(height: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(20)),
-                      child: Text('📱 ${u.mobile}', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(color: const Color(0xFFF4A024), borderRadius: BorderRadius.circular(10)),
+                      child: const Icon(Icons.directions_bus, color: Colors.white, size: 22),
                     ),
+                    const SizedBox(width: 10),
+                    const Text('TrackBus', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
                   ],
                 ),
               ),
+            ),
+          ),
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  onTap: _editProfile,
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 88,
+                        height: 88,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.grey.shade200,
+                          border: Border.all(color: const Color(0xFF1A3A5C).withOpacity(0.2), width: 2),
+                        ),
+                        child: hasPhoto
+                            ? ClipOval(child: Image.file(File(u.photoPath!), fit: BoxFit.cover))
+                            : const Icon(Icons.person, color: Color(0xFF1A3A5C), size: 48),
+                      ),
+                      Positioned(
+                        bottom: 0,
+                        right: 0,
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: const BoxDecoration(color: Color(0xFFF4A024), shape: BoxShape.circle),
+                          child: const Icon(Icons.edit, color: Colors.white, size: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(u.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF1A1A2E))),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.email_outlined, size: 14, color: Colors.grey),
+                          const SizedBox(width: 6),
+                          Expanded(child: Text(u.email, style: TextStyle(fontSize: 13, color: Colors.grey.shade700))),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.phone_outlined, size: 14, color: Colors.grey),
+                          const SizedBox(width: 6),
+                          Text(u.mobile, style: TextStyle(fontSize: 13, color: Colors.grey.shade700)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextButton.icon(
+                        onPressed: _editProfile,
+                        icon: const Icon(Icons.edit, size: 16),
+                        label: const Text('Edit Profile'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF1A3A5C),
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
 
@@ -1897,7 +2073,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _ProfileOption(
                     icon: Icons.edit,
                     label: 'Edit Profile',
-                    sub: 'Update your name, phone, photo',
+                    sub: 'Update name, mobile, photo & email (OTP)',
                     color: const Color(0xFF1A3A5C),
                     onTap: _editProfile,
                   ),
